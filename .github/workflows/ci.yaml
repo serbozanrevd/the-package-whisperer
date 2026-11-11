@@ -50,7 +50,7 @@ jobs:
           gh release download "$LATEST_TAG_FOR_REPO_1" \
             --repo "${{ env.OWNER }}/${{ env.REPO1 }}" \
             --pattern "*.deb" \
-            -O out/pool/main
+            -D out/pool/main
 
       - name: Download debs from repo 2 release assets
         env:
@@ -63,7 +63,7 @@ jobs:
           gh release download "$LATEST_TAG_FOR_REPO_2" \
             --repo "${{ env.OWNER }}/${{ env.REPO2 }}" \
             --pattern "*.deb" \
-            -O out/pool/main
+            -D out/pool/main
 
       - name: Download debs from repo 3 release assets
         env:
@@ -76,7 +76,7 @@ jobs:
           gh release download "$LATEST_TAG_FOR_REPO_3" \
             --repo "${{ env.OWNER }}/${{ env.REPO3 }}" \
             --pattern "*.deb" \
-            -O out/pool/main
+            -D out/pool/main
 
       - name: Verify we have debs
         run: |
