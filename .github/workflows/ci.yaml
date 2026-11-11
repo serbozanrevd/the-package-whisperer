@@ -1,0 +1,110 @@
+name: Build APT repo from my deb packages build and publish to gh-pages
+
+on:
+  workflow_dispatch:
+  # schedule:
+  # - cron: "0 */6 * * *"   # every 6 hours (optional)
+
+env:
+  OWNER: serbozanrevd
+  REPO1: kvrocks-fpm
+  REPO2: poppy-fpm
+  REPO3: bgpkit-parser-fpm
+  REPO4: certstream-server-rust-fpm
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout host repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils
+
+      - name: Create repo structure
+        run: |
+          rm -rf out
+          mkdir -p out/pool/main
+          mkdir -p out/dists/stable/binary-amd64
+          mkdir -p out/dists/stable/binary-arm64
+
+      # ---- Download .deb assets from my repositories ----
+      # TODO: need to move to a loop later
+      - name: Download debs from repo 1 release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          gh auth status
+          LATEST_TAG_FOR_REPO_1="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO1 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
+          echo "$LATEST_TAG_FOR_REPO_1"
+          gh release download "$LATEST_TAG_FOR_REPO_1" \
+            --repo "${{ env.OWNER }}/${{ env.REPO1 }}" \
+            --pattern "*.deb" \
+            -O out/pool/main
+
+      - name: Download debs from repo 2 release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          gh auth status
+          LATEST_TAG_FOR_REPO_2="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO2 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
+          echo "$LATEST_TAG_FOR_REPO_2"
+          gh release download "$LATEST_TAG_FOR_REPO_2" \
+            --repo "${{ env.OWNER }}/${{ env.REPO2 }}" \
+            --pattern "*.deb" \
+            -O out/pool/main
+
+      - name: Download debs from repo 3 release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          gh auth status
+          LATEST_TAG_FOR_REPO_3="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO3 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
+          echo "$LATEST_TAG_FOR_REPO_3"
+          gh release download "$LATEST_TAG_FOR_REPO_3" \
+            --repo "${{ env.OWNER }}/${{ env.REPO3 }}" \
+            --pattern "*.deb" \
+            -O out/pool/main
+
+      - name: Verify we have debs
+        run: |
+          ls -lah out/pool/main
+          test "$(ls -1 out/pool/main/*.deb 2>/dev/null | wc -l)" -gt 0
+
+      # ---- Generate APT metadata ----
+      - name: Generate Packages and Packages.gz
+        run: |
+          cd out
+          dpkg-scanpackages pool/main --arch amd64 /dev/null > dists/stable/binary-amd64/Packages
+          gzip -9 -c dists/stable/binary-amd64/Packages > dists/stable/binary-amd64/Packages.gz
+          dpkg-scanpackages pool/main --arch arm64 /dev/null > dists/stable/binary-arm64/Packages
+          gzip -9 -c dists/stable/binary-arm64/Packages > dists/stable/binary-arm64/Packages.gz
+
+      - name: Generate Release file
+        run: |
+          cd out
+          # apt-ftparchive is not always present; dpkg-dev is, but apt-ftparchive comes from apt-utils
+          # If you lack apt-ftparchive, you can write Release manually (less ideal).
+          apt-ftparchive release dists/stable > dists/stable/Release
+          # For convenience, ensure also InRelease exists if you want (requires signing; mandatory, later on)
+          # TODO: gpg signing.
+
+      # ---- Publish to gh-pages branch ----
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: out
+          publish_branch: gh-pages
