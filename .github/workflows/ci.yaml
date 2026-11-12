@@ -111,6 +111,8 @@ jobs:
         run: |
           set -e
           echo "$GPG_KEY" | gpg --batch --import
+          gpg --list-keys --keyid-format=long
+          gpg --list-secret-keys --keyid-format=long
 
           # Replace these paths if your repo output differs
           gpg --batch --yes --pinentry-mode loopback \
