@@ -109,10 +109,10 @@ jobs:
 
       - name: Import GPG key and sign Release
         env:
-          GPG_KEY: ${{ secrets.gpg_armored_key }}
+          GPG_KEY: ${{ secrets.GPG_ARMORED_KEY }}
         run: |
           set -e
-          [ -z "$GPG_KEY" ] && { echo "ERROR: gpg_armored_key secret is empty or not set"; exit 1; }
+          [ -z "$GPG_KEY" ] && { echo "ERROR: GPG_ARMORED_KEY secret is empty or not set"; exit 1; }
           echo "$GPG_KEY" | base64 -d | gpg --batch --import
           gpg --list-keys --keyid-format=long
           gpg --list-secret-keys --keyid-format=long
