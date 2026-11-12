@@ -28,7 +28,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev apt-utils
+          sudo apt-get install -y dpkg-dev apt-utils gpg
 
       - name: Create repo structure
         run: |
@@ -83,13 +83,17 @@ jobs:
           ls -lah out/pool/main
           test "$(ls -1 out/pool/main/*.deb 2>/dev/null | wc -l)" -gt 0
 
+      - name: Copy gpg public key
+        run: |
+          cp apt-repo.gpg.key out/
+
       # ---- Generate APT metadata ----
       - name: Generate Packages and Packages.gz
         run: |
           cd out
-          dpkg-scanpackages pool/main --arch amd64 /dev/null > dists/stable/binary-amd64/Packages
+          dpkg-scanpackages pool/main amd64 /dev/null > dists/stable/binary-amd64/Packages
           gzip -9 -c dists/stable/binary-amd64/Packages > dists/stable/binary-amd64/Packages.gz
-          dpkg-scanpackages pool/main --arch arm64 /dev/null > dists/stable/binary-arm64/Packages
+          dpkg-scanpackages pool/main arm64 /dev/null > dists/stable/binary-arm64/Packages
           gzip -9 -c dists/stable/binary-arm64/Packages > dists/stable/binary-arm64/Packages.gz
 
       - name: Generate Release file
@@ -100,6 +104,18 @@ jobs:
           apt-ftparchive release dists/stable > dists/stable/Release
           # For convenience, ensure also InRelease exists if you want (requires signing; mandatory, later on)
           # TODO: gpg signing.
+
+      - name: Import GPG key and sign Release
+        env:
+          GPG_KEY: ${{ secrets.gpg_armored_key }}
+        run: |
+          set -e
+          echo "$GPG_KEY" | gpg --batch --import
+
+          # Replace these paths if your repo output differs
+          gpg --batch --yes --pinentry-mode loopback \
+            --output dists/stable/Release.gpg \
+            --detach-sign dists/stable/Release
 
       # ---- Publish to gh-pages branch ----
       - name: Deploy to gh-pages
