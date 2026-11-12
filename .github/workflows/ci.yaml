@@ -91,9 +91,9 @@ jobs:
       - name: Generate Packages and Packages.gz
         run: |
           cd out
-          dpkg-scanpackages pool/main amd64 /dev/null > dists/stable/binary-amd64/Packages
+          dpkg-scanpackages --arch amd64 pool/main /dev/null > dists/stable/binary-amd64/Packages
           gzip -9 -c dists/stable/binary-amd64/Packages > dists/stable/binary-amd64/Packages.gz
-          dpkg-scanpackages pool/main arm64 /dev/null > dists/stable/binary-arm64/Packages
+          dpkg-scanpackages --arch arm64 pool/main /dev/null > dists/stable/binary-arm64/Packages
           gzip -9 -c dists/stable/binary-arm64/Packages > dists/stable/binary-arm64/Packages.gz
 
       - name: Generate Release file
