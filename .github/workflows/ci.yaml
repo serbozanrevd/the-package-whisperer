@@ -7,10 +7,11 @@ on:
 
 env:
   OWNER: serbozanrevd
-  REPO1: kvrocks-fpm
-  REPO2: poppy-fpm
-  REPO3: bgpkit-parser-fpm
-  REPO4: certstream-server-rust-fpm
+  REPOS: |
+    kvrocks-fpm
+    poppy-fpm
+    bgpkit-parser-fpm
+    certstream-server-rust-fpm
 
 jobs:
   build-and-publish:
@@ -40,45 +41,21 @@ jobs:
           mkdir -p out/dists/stable/binary-arm64
 
       # ---- Download .deb assets from my repositories ----
-      # TODO: need to move to a loop later
-      - name: Download debs from repo 1 release assets
+      - name: Download debs from all repos
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           gh auth status
-          LATEST_TAG_FOR_REPO_1="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO1 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
-          echo "$LATEST_TAG_FOR_REPO_1"
-          gh release download "$LATEST_TAG_FOR_REPO_1" \
-            --repo "${{ env.OWNER }}/${{ env.REPO1 }}" \
-            --pattern "*.deb" \
-            -D out/pool/main
-
-      - name: Download debs from repo 2 release assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          gh auth status
-          LATEST_TAG_FOR_REPO_2="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO2 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
-          echo "$LATEST_TAG_FOR_REPO_2"
-          gh release download "$LATEST_TAG_FOR_REPO_2" \
-            --repo "${{ env.OWNER }}/${{ env.REPO2 }}" \
-            --pattern "*.deb" \
-            -D out/pool/main
-
-      - name: Download debs from repo 3 release assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          gh auth status
-          LATEST_TAG_FOR_REPO_3="$(gh release list --repo ${{ env.OWNER }}/${{ env.REPO3 }} --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
-          echo "$LATEST_TAG_FOR_REPO_3"
-          gh release download "$LATEST_TAG_FOR_REPO_3" \
-            --repo "${{ env.OWNER }}/${{ env.REPO3 }}" \
-            --pattern "*.deb" \
-            -D out/pool/main
+          while IFS= read -r repo; do
+            [ -z "$repo" ] && continue
+            tag="$(gh release list --repo "${{ env.OWNER }}/$repo" --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
+            echo "$repo -> $tag"
+            gh release download "$tag" \
+              --repo "${{ env.OWNER }}/$repo" \
+              --pattern "*.deb" \
+              -D out/pool/main
+          done <<< "${{ env.REPOS }}"
 
       - name: Verify we have debs
         run: |
