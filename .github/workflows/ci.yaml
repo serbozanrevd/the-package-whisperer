@@ -151,6 +151,10 @@ jobs:
               --armor \
               --output "dists/$suite/Release.gpg" \
               --detach-sign "dists/$suite/Release"
+            gpg --batch --yes --pinentry-mode loopback \
+              --armor \
+              --output "dists/$suite/InRelease" \
+              --clearsign "dists/$suite/Release"
           done
 
       - name: Generate index page
