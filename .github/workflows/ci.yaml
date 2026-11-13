@@ -94,33 +94,29 @@ jobs:
       # ---- Generate APT metadata ----
       - name: Generate Packages and Packages.gz
         run: |
+          cat > /tmp/filter_packages.py << 'EOF'
+          import re, sys
+          suite = sys.argv[1]
+          def split_stanzas(text):
+              return [b + '\n' for b in re.split(r'\n\n+', text.strip()) if b.strip()]
+          def arch_of(s):
+              m = re.search(r'^Architecture: (.+)$', s, re.MULTILINE)
+              return m.group(1).strip() if m else ''
+          stanzas = split_stanzas(open('/tmp/all_packages').read())
+          for arch, path in [
+              ('amd64', f'dists/{suite}/main/binary-amd64/Packages'),
+              ('arm64', f'dists/{suite}/main/binary-arm64/Packages'),
+          ]:
+              filtered = [s for s in stanzas if arch_of(s) in (arch, 'all')]
+              open(path, 'w').write('\n'.join(filtered) + '\n')
+          EOF
           cd out
           for suite_dir in dists/*/; do
             suite="$(basename "$suite_dir")"
             pool="pool/$suite/main"
             [ -d "$pool" ] || continue
-            # Scan without --arch: that flag matches filename suffix *_amd64.deb, not the
-            # Architecture field, so it silently drops packages with non-standard name suffixes.
             dpkg-scanpackages "$pool" /dev/null > /tmp/all_packages
-            python3 -c "
-import re, sys
-suite = sys.argv[1]
-
-def split_stanzas(text):
-    return [b + '\n' for b in re.split(r'\n\n+', text.strip()) if b.strip()]
-
-def arch_of(s):
-    m = re.search(r'^Architecture: (.+)$', s, re.MULTILINE)
-    return m.group(1).strip() if m else ''
-
-stanzas = split_stanzas(open('/tmp/all_packages').read())
-for arch, path in [
-    ('amd64', f'dists/{suite}/main/binary-amd64/Packages'),
-    ('arm64', f'dists/{suite}/main/binary-arm64/Packages'),
-]:
-    filtered = [s for s in stanzas if arch_of(s) in (arch, 'all')]
-    open(path, 'w').write('\n'.join(filtered) + '\n')
-" "$suite"
+            python3 /tmp/filter_packages.py "$suite"
             gzip -9 -c "dists/$suite/main/binary-amd64/Packages" > "dists/$suite/main/binary-amd64/Packages.gz"
             gzip -9 -c "dists/$suite/main/binary-arm64/Packages" > "dists/$suite/main/binary-arm64/Packages.gz"
           done
