@@ -51,10 +51,18 @@ jobs:
             [ -z "$repo" ] && continue
             tag="$(gh release list --repo "${{ env.OWNER }}/$repo" --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')"
             echo "$repo -> $tag"
+            tmpdir=$(mktemp -d)
             gh release download "$tag" \
               --repo "${{ env.OWNER }}/$repo" \
               --pattern "*.deb" \
-              -D out/pool/main
+              -D "$tmpdir"
+            for f in "$tmpdir"/*.deb; do
+              [ -f "$f" ] || continue
+              cp "$f" out/pool/main/
+              printf '%s\thttps://github.com/${{ env.OWNER }}/%s\n' \
+                "$(basename "$f")" "$repo" >> out/pool/main/.source-map.tsv
+            done
+            rm -rf "$tmpdir"
           done <<< "${{ env.REPOS }}"
 
       - name: Verify we have debs
@@ -62,9 +70,10 @@ jobs:
           ls -lah out/pool/main
           test "$(ls -1 out/pool/main/*.deb 2>/dev/null | wc -l)" -gt 0
 
-      - name: Copy gpg public key
+      - name: Copy static assets
         run: |
           cp apt-repo.gpg.key out/
+          cp banner.svg out/
 
       # ---- Generate APT metadata ----
       - name: Generate Packages and Packages.gz
@@ -96,8 +105,80 @@ jobs:
 
           cd out
           gpg --batch --yes --pinentry-mode loopback \
+            --armor \
             --output dists/stable/Release.gpg \
             --detach-sign dists/stable/Release
+
+      - name: Generate index page
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          PAGES_URL="https://${{ env.OWNER }}.github.io/${REPO_NAME}"
+          python3 - "$PAGES_URL" <<'PYEOF'
+          import sys, os, glob, subprocess
+          url = sys.argv[1]
+          source_map = {}
+          tsv = "out/pool/main/.source-map.tsv"
+          if os.path.exists(tsv):
+              for line in open(tsv):
+                  parts = line.strip().split("\t")
+                  if len(parts) == 2:
+                      source_map[parts[0]] = parts[1]
+          rows = []
+          for deb in sorted(glob.glob("out/pool/main/*.deb")):
+              raw = subprocess.check_output(["dpkg-deb", "--field", deb], text=True)
+              f = {}
+              for line in raw.splitlines():
+                  if ": " in line and not line.startswith(" "):
+                      k, v = line.split(": ", 1)
+                      f[k] = v
+              fname = os.path.basename(deb)
+              homepage = f.get("Homepage", "")
+              pkg_name = f.get("Package", "?")
+              if homepage:
+                  pkg_label = f'<a href="{homepage}" target="_blank" rel="noopener"><strong>{pkg_name}</strong></a>'
+              else:
+                  pkg_label = f'<strong>{pkg_name}</strong>'
+              repo_url = source_map.get(fname, "")
+              repo_link = f' <a href="{repo_url}" target="_blank" rel="noopener">[source]</a>' if repo_url else ""
+              rows.append(
+                  f'<li><a href="pool/main/{fname}">[.deb]</a> {pkg_label}'
+                  f' {f.get("Version","?")} ({f.get("Architecture","?")})'
+                  f' &mdash; {f.get("Description","")}{repo_link}</li>'
+              )
+          pkg_list = "\n".join(rows)
+          html = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="UTF-8">
+          <title>APT Repository — the-package-whisperer</title>
+          <style>
+          body {{ font-family: monospace; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #333; }}
+          pre {{ background: #f4f4f4; padding: 1rem; border-radius: 4px; overflow-x: auto; }}
+          li {{ margin: 0.4rem 0; }}
+          </style>
+          </head>
+          <body>
+          <img src="banner.svg" alt="the-package-whisperer" style="width:100%;max-width:500px;display:block;margin:0 auto 2rem">
+          <h2>Setup</h2>
+          <pre># 1. Import GPG key
+          curl -fsSL {url}/apt-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/serbozanrevd.gpg
+
+          # 2. Add repository
+          echo "deb [signed-by=/etc/apt/keyrings/serbozanrevd.gpg] {url} stable main" \\
+            | sudo tee /etc/apt/sources.list.d/serbozanrevd.list
+
+          # 3. Update &amp; install
+          sudo apt-get update
+          sudo apt-get install &lt;package-name&gt;</pre>
+          <h2>Packages</h2>
+          <ul>
+          {pkg_list}
+          </ul>
+          </body>
+          </html>
+          """
+          open("out/index.html", "w").write(html)
+          PYEOF
 
       # ---- Publish to GitHub Pages ----
       - name: Upload Pages artifact
