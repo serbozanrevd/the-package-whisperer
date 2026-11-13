@@ -167,18 +167,18 @@ jobs:
           <pre>curl -fsSL {url}/apt-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/serbozanrevd.gpg</pre>
           <p><strong>2a. Add repository (.list — legacy)</strong></p>
           <pre>echo "deb [signed-by=/etc/apt/keyrings/serbozanrevd.gpg] {url} stable main" \\
-  | sudo tee /etc/apt/sources.list.d/serbozanrevd.list</pre>
+            | sudo tee /etc/apt/sources.list.d/serbozanrevd.list</pre>
           <p><strong>2b. Add repository (.sources — DEB822, recommended)</strong></p>
           <pre>sudo tee /etc/apt/sources.list.d/serbozanrevd.sources &lt;&lt; 'EOF'
-Types: deb
-URIs: {url}
-Suites: stable
-Components: main
-Signed-By: /etc/apt/keyrings/serbozanrevd.gpg
-EOF</pre>
+          Types: deb
+          URIs: {url}
+          Suites: stable
+          Components: main
+          Signed-By: /etc/apt/keyrings/serbozanrevd.gpg
+          EOF</pre>
           <p><strong>3. Update &amp; install</strong></p>
           <pre>sudo apt-get update
-sudo apt-get install &lt;package-name&gt;</pre>
+          sudo apt-get install &lt;package-name&gt;</pre>
           <h2>Packages</h2>
           <ul>
           {pkg_list}
