@@ -36,9 +36,7 @@ jobs:
       - name: Create repo structure
         run: |
           rm -rf out
-          mkdir -p out/pool/main
-          mkdir -p out/dists/stable/main/binary-amd64
-          mkdir -p out/dists/stable/main/binary-arm64
+          mkdir -p out/pool
 
       # ---- Download .deb assets from my repositories ----
       - name: Download debs from all repos
@@ -58,17 +56,35 @@ jobs:
               -D "$tmpdir"
             for f in "$tmpdir"/*.deb; do
               [ -f "$f" ] || continue
-              cp "$f" out/pool/main/
-              printf '%s\thttps://github.com/${{ env.OWNER }}/%s\n' \
-                "$(basename "$f")" "$repo" >> out/pool/main/.source-map.tsv
+              orig="$(basename "$f")"
+              # Route to suite based on -uNN suffix; default to noble (u24)
+              uver="$(echo "$orig" | sed -n 's/.*-u\([0-9]\+\)\.deb$/\1/p')"
+              if [ -n "$uver" ]; then
+                case "u$uver" in
+                  u22) suite=jammy  ;;
+                  u24) suite=noble  ;;
+                  u26) suite=plucky ;;
+                  *)   suite=noble  ;;
+                esac
+                dest="$(echo "$orig" | sed "s/-u${uver}\.deb$/.deb/")"
+              else
+                suite=noble
+                dest="$orig"
+              fi
+              mkdir -p "out/pool/$suite/main"
+              mkdir -p "out/dists/$suite/main/binary-amd64"
+              mkdir -p "out/dists/$suite/main/binary-arm64"
+              cp "$f" "out/pool/$suite/main/$dest"
+              printf '%s\t%s\thttps://github.com/${{ env.OWNER }}/%s\n' \
+                "$suite" "$dest" "$repo" >> out/.source-map.tsv
             done
             rm -rf "$tmpdir"
           done <<< "${{ env.REPOS }}"
 
       - name: Verify we have debs
         run: |
-          ls -lah out/pool/main
-          test "$(ls -1 out/pool/main/*.deb 2>/dev/null | wc -l)" -gt 0
+          find out/pool -name "*.deb" | sort
+          test "$(find out/pool -name '*.deb' | wc -l)" -gt 0
 
       - name: Copy static assets
         run: |
@@ -79,24 +95,50 @@ jobs:
       - name: Generate Packages and Packages.gz
         run: |
           cd out
-          dpkg-scanpackages --arch amd64 pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
-          dpkg-scanpackages --arch arm64 pool/main /dev/null > dists/stable/main/binary-arm64/Packages
-          gzip -9 -c dists/stable/main/binary-arm64/Packages > dists/stable/main/binary-arm64/Packages.gz
+          for suite_dir in dists/*/; do
+            suite="$(basename "$suite_dir")"
+            pool="pool/$suite/main"
+            [ -d "$pool" ] || continue
+            # Scan without --arch: that flag matches filename suffix *_amd64.deb, not the
+            # Architecture field, so it silently drops packages with non-standard name suffixes.
+            dpkg-scanpackages "$pool" /dev/null > /tmp/all_packages
+            python3 -c "
+import re, sys
+suite = sys.argv[1]
 
-      - name: Generate Release file
+def split_stanzas(text):
+    return [b + '\n' for b in re.split(r'\n\n+', text.strip()) if b.strip()]
+
+def arch_of(s):
+    m = re.search(r'^Architecture: (.+)$', s, re.MULTILINE)
+    return m.group(1).strip() if m else ''
+
+stanzas = split_stanzas(open('/tmp/all_packages').read())
+for arch, path in [
+    ('amd64', f'dists/{suite}/main/binary-amd64/Packages'),
+    ('arm64', f'dists/{suite}/main/binary-arm64/Packages'),
+]:
+    filtered = [s for s in stanzas if arch_of(s) in (arch, 'all')]
+    open(path, 'w').write('\n'.join(filtered) + '\n')
+" "$suite"
+            gzip -9 -c "dists/$suite/main/binary-amd64/Packages" > "dists/$suite/main/binary-amd64/Packages.gz"
+            gzip -9 -c "dists/$suite/main/binary-arm64/Packages" > "dists/$suite/main/binary-arm64/Packages.gz"
+          done
+
+      - name: Generate Release files
         run: |
           cd out
-          # apt-ftparchive is not always present; dpkg-dev is, but apt-ftparchive comes from apt-utils
-          # If you lack apt-ftparchive, you can write Release manually (less ideal).
-          apt-ftparchive \
-            -o APT::FTPArchive::Release::Suite="stable" \
-            -o APT::FTPArchive::Release::Codename="stable" \
-            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
-            -o APT::FTPArchive::Release::Components="main" \
-            release dists/stable > dists/stable/Release
+          for suite_dir in dists/*/; do
+            suite="$(basename "$suite_dir")"
+            apt-ftparchive \
+              -o APT::FTPArchive::Release::Suite="$suite" \
+              -o APT::FTPArchive::Release::Codename="$suite" \
+              -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+              -o APT::FTPArchive::Release::Components="main" \
+              release "dists/$suite" > "dists/$suite/Release"
+          done
 
-      - name: Import GPG key and sign Release
+      - name: Import GPG key and sign Release files
         env:
           GPG_KEY: ${{ secrets.GPG_ARMORED_KEY }}
         run: |
@@ -107,48 +149,76 @@ jobs:
           gpg --list-secret-keys --keyid-format=long
 
           cd out
-          gpg --batch --yes --pinentry-mode loopback \
-            --armor \
-            --output dists/stable/Release.gpg \
-            --detach-sign dists/stable/Release
+          for suite_dir in dists/*/; do
+            suite="$(basename "$suite_dir")"
+            gpg --batch --yes --pinentry-mode loopback \
+              --armor \
+              --output "dists/$suite/Release.gpg" \
+              --detach-sign "dists/$suite/Release"
+          done
 
       - name: Generate index page
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
           PAGES_URL="https://${{ env.OWNER }}.github.io/${REPO_NAME}"
           python3 - "$PAGES_URL" <<'PYEOF'
-          import sys, os, glob, subprocess
+          import sys, os, glob, subprocess, collections
           url = sys.argv[1]
-          source_map = {}
-          tsv = "out/pool/main/.source-map.tsv"
+
+          source_map = {}  # (suite, fname) -> repo_url
+          tsv = "out/.source-map.tsv"
           if os.path.exists(tsv):
               for line in open(tsv):
                   parts = line.strip().split("\t")
-                  if len(parts) == 2:
-                      source_map[parts[0]] = parts[1]
-          rows = []
-          for deb in sorted(glob.glob("out/pool/main/*.deb")):
+                  if len(parts) == 3:
+                      source_map[(parts[0], parts[1])] = parts[2]
+
+          SUITE_ORDER = ["jammy", "noble", "plucky"]
+          SUITE_LABEL = {
+              "jammy":  "Ubuntu 22.04 (Jammy)",
+              "noble":  "Ubuntu 24.04 (Noble)",
+              "plucky": "Ubuntu 26.04 (Plucky)",
+          }
+
+          packages_by_suite = collections.defaultdict(list)
+          for deb in sorted(glob.glob("out/pool/*/main/*.deb")):
+              parts = deb.split("/")  # out / pool / <suite> / main / <file>
+              suite = parts[2]
+              fname = os.path.basename(deb)
               raw = subprocess.check_output(["dpkg-deb", "--field", deb], text=True)
               f = {}
               for line in raw.splitlines():
                   if ": " in line and not line.startswith(" "):
                       k, v = line.split(": ", 1)
                       f[k] = v
-              fname = os.path.basename(deb)
               homepage = f.get("Homepage", "")
               pkg_name = f.get("Package", "?")
-              if homepage:
-                  pkg_label = f'<a href="{homepage}" target="_blank" rel="noopener"><strong>{pkg_name}</strong></a>'
-              else:
-                  pkg_label = f'<strong>{pkg_name}</strong>'
-              repo_url = source_map.get(fname, "")
+              pkg_label = (f'<a href="{homepage}" target="_blank" rel="noopener"><strong>{pkg_name}</strong></a>'
+                           if homepage else f'<strong>{pkg_name}</strong>')
+              repo_url = source_map.get((suite, fname), "")
               repo_link = f' <a href="{repo_url}" target="_blank" rel="noopener">[source]</a>' if repo_url else ""
-              rows.append(
-                  f'<li><a href="pool/main/{fname}">[.deb]</a> {pkg_label}'
+              packages_by_suite[suite].append(
+                  f'<li><a href="pool/{suite}/main/{fname}">[.deb]</a> {pkg_label}'
                   f' {f.get("Version","?")} ({f.get("Architecture","?")})'
                   f' &mdash; {f.get("Description","")}{repo_link}</li>'
               )
-          pkg_list = "\n".join(rows)
+
+          present_suites = [s for s in SUITE_ORDER if s in packages_by_suite]
+          for s in sorted(packages_by_suite):
+              if s not in present_suites:
+                  present_suites.append(s)
+
+          sections = []
+          for suite in present_suites:
+              label = SUITE_LABEL.get(suite, suite.capitalize())
+              items = "\n".join(packages_by_suite[suite])
+              sections.append(f"""<h3>{label}</h3>
+          <p><code>deb [signed-by=/etc/apt/keyrings/serbozanrevd.gpg] {url} {suite} main</code></p>
+          <ul>
+          {items}
+          </ul>""")
+
+          pkg_sections = "\n".join(sections)
           html = f"""<!DOCTYPE html>
           <html lang="en">
           <head>
@@ -166,13 +236,13 @@ jobs:
           <p><strong>1. Import GPG key</strong></p>
           <pre>curl -fsSL {url}/apt-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/serbozanrevd.gpg</pre>
           <p><strong>2a. Add repository (.list — legacy)</strong></p>
-          <pre>echo "deb [signed-by=/etc/apt/keyrings/serbozanrevd.gpg] {url} stable main" \\
+          <pre>echo "deb [signed-by=/etc/apt/keyrings/serbozanrevd.gpg] {url} noble main" \\
             | sudo tee /etc/apt/sources.list.d/serbozanrevd.list</pre>
           <p><strong>2b. Add repository (.sources — DEB822, recommended)</strong></p>
           <pre>sudo tee /etc/apt/sources.list.d/serbozanrevd.sources &lt;&lt; 'EOF'
           Types: deb
           URIs: {url}
-          Suites: stable
+          Suites: noble
           Components: main
           Signed-By: /etc/apt/keyrings/serbozanrevd.gpg
           EOF</pre>
@@ -180,9 +250,7 @@ jobs:
           <pre>sudo apt-get update
           sudo apt-get install &lt;package-name&gt;</pre>
           <h2>Packages</h2>
-          <ul>
-          {pkg_list}
-          </ul>
+          {pkg_sections}
           </body>
           </html>
           """
