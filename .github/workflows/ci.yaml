@@ -71,6 +71,19 @@ jobs:
                 suite=noble
                 dest="$orig"
               fi
+              # Normalize non-standard Architecture field (e.g. linux-amd64 → amd64)
+              raw_arch="$(dpkg-deb --field "$f" Architecture)"
+              case "$raw_arch" in
+                amd64|arm64|i386|armhf|all) ;;
+                *amd64*)
+                  tmpd="$(mktemp -d)" && dpkg-deb -R "$f" "$tmpd"
+                  sed -i 's/^Architecture: .*/Architecture: amd64/' "$tmpd/DEBIAN/control"
+                  dpkg-deb --build "$tmpd" "$f" && rm -rf "$tmpd" ;;
+                *arm64*|*aarch64*)
+                  tmpd="$(mktemp -d)" && dpkg-deb -R "$f" "$tmpd"
+                  sed -i 's/^Architecture: .*/Architecture: arm64/' "$tmpd/DEBIAN/control"
+                  dpkg-deb --build "$tmpd" "$f" && rm -rf "$tmpd" ;;
+              esac
               mkdir -p "out/pool/$suite/main"
               mkdir -p "out/dists/$suite/main/binary-amd64"
               mkdir -p "out/dists/$suite/main/binary-arm64"
