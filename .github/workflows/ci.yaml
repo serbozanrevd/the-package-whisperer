@@ -128,7 +128,7 @@ jobs:
             suite="$(basename "$suite_dir")"
             pool="pool/$suite/main"
             [ -d "$pool" ] || continue
-            dpkg-scanpackages "$pool" /dev/null > /tmp/all_packages
+            apt-ftparchive packages "$pool" > /tmp/all_packages
             python3 /tmp/filter_packages.py "$suite"
             gzip -9 -c "dists/$suite/main/binary-amd64/Packages" > "dists/$suite/main/binary-amd64/Packages.gz"
             gzip -9 -c "dists/$suite/main/binary-arm64/Packages" > "dists/$suite/main/binary-arm64/Packages.gz"
